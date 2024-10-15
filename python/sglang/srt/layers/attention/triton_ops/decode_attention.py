@@ -531,7 +531,8 @@ def _decode_grouped_softmax_reducev_fwd(
     b_start_loc,
     b_seq_len,
 ):
-    BLOCK = 128
+    #BLOCK = 128
+    BLOCK = 64
     batch, head_num = b_seq_len.shape[0], logits.shape[0]
     kv_group_num = logits.shape[0] // v_buffer.shape[1]
     BLOCK_H = max(16, triton.next_power_of_2(kv_group_num))

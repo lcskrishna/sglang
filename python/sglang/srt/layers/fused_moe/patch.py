@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Callable
 
 import torch
 from torch.nn import functional as F
@@ -98,6 +98,7 @@ def fused_moe_forward_native(
     renormalize: bool,
     topk_group: Optional[int] = None,
     num_expert_group: Optional[int] = None,
+    custom_routing_function: Optional[Callable] = None,
 ) -> torch.Tensor:
     topk_weights, topk_ids = select_experts_native(
         hidden_states=x,
