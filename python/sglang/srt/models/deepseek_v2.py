@@ -715,6 +715,14 @@ class DeepseekV2AttentionMLA(nn.Module):
         val_cache_buf = forward_batch.token_to_kv_pool.get_value_buffer(self.attn_mqa.layer_id)
         k_pe_output = k_pe
 
+        print ("------------------------------")
+        print ("CHAI: forward_absorb_fused_rope")
+        print (f"q_input={q_input.size()}:{q_input.dtype}, key_cache_buf={key_cache_buf.size()}:{key_cache_buf.dtype}, value_cache_buf={val_cache_buf.size()}:{val_cache_buf.dtype}")
+        print (f"attn_output={attn_output.size()}:{attn_output.dtype}, req_to_token={req_to_token.size()}:{req_to_token.dtype}")
+        print (f"b_req_idx={b_req_idx.size()}:{b_req_idx.dtype}, b_seq_len={b_seq_len.size()}:{b_seq_len.dtype}")
+        print ("self.kv_lora_rank={}, rotary_dim={}, cos_sin_cache={}:{} ".format(self.kv_lora_rank, self.rotary_emb.rotary_dim, cos_sin_cache.size(), cos_sin_cache.dtype)) 
+        print ("positions={}:{}, attn_logits={}:{}, num_kv_split={}, sm_scale={}, logit_cap={}, use_rope={}, is_neox_style={}".format(positions.size(), positions.dtype, attn_logits.size(), attn_logits.dtype, num_kv_split, sm_scale, 0.0, False, self.rotary_emb.is_neox_style))
+
         decode_attention_fwd_grouped_rope(
             q_input,
             key_cache_buf,
@@ -725,14 +733,15 @@ class DeepseekV2AttentionMLA(nn.Module):
             b_seq_len,
             k_pe_output,
             self.kv_lora_rank,
-            self.qk_rope_head_dim,
+            self.rotary_emb.rotary_dim,
             cos_sin_cache,
             positions,
             attn_logits,
             num_kv_split,
             sm_scale,
             logit_cap=0.0,
-            use_rope=False)
+            use_rope=False,
+            is_neox_style=self.rotary_emb.is_neox_style)
 
         #decode_attention_
         #attn_output = attn_output.view(-1, self.num_local_heads, self.kv_lora_rank)
