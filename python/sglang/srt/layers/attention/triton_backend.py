@@ -441,7 +441,15 @@ class TritonAttnBackend(AttentionBackend):
             forward_batch.token_to_kv_pool.set_kv_buffer(
                 layer, forward_batch.out_cache_loc, k, v
             )
-
+        
+        key_buffer = forward_batch.token_to_kv_pool.get_key_buffer(layer.layer_id)
+        value_buffer = forward_batch.token_to_kv_pool.get_value_buffer(layer.layer_id)
+        print ("!! forward_decode q={}:{}, k={}:{}, v={}:{}".format(q.size(), q.dtype, k.size(), k.dtype, v.size(), v.dtype))
+        print ("!! calling decode_attention_fwd q={}:{}".format(q.view(-1, layer.tp_q_head_num, layer.qk_head_dim).size(), q.dtype))
+        print ("k_buffer={}:{}, v_buffer={}:{}".format(key_buffer.size(), key_buffer.dtype, value_buffer.size(), value_buffer.dtype))
+        print ("o={}:{}".format(o.view(-1, layer.tp_q_head_num, layer.v_head_dim).size(), o.dtype))
+        print ("kv_indptr={}:{}, kv_indices={}:{}, attn_logits={}:{}".format(kv_indptr.size(), kv_indptr.dtype, kv_indices.size(), kv_indices.dtype, attn_logits.size(), attn_logits.dtype))
+        print ("num_kv_splits={}, scaling={}, logit_cap={}".format(self.num_kv_splits, layer.scaling, layer.logit_cap))
         self.decode_attention_fwd(
             q.view(-1, layer.tp_q_head_num, layer.qk_head_dim),
             forward_batch.token_to_kv_pool.get_key_buffer(layer.layer_id),

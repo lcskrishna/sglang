@@ -574,6 +574,8 @@ class DeepseekV2AttentionMLA(nn.Module):
         hidden_states: torch.Tensor,
         forward_batch: ForwardBatch,
     ) -> torch.Tensor:
+        print ("--------------------------------------")
+        print ("CHAI: forward_absorb positions={}:{}, hidden_states={}:{}".format(positions.size(), positions.dtype, hidden_states.size(), hidden_states.dtype))
         q_len = hidden_states.shape[0]
         q_input = hidden_states.new_empty(
             q_len, self.num_local_heads, self.kv_lora_rank + self.qk_rope_head_dim
@@ -616,8 +618,10 @@ class DeepseekV2AttentionMLA(nn.Module):
         q_pe, k_pe = self.rotary_emb(positions, q_pe, k_pe)
         q_input[..., self.kv_lora_rank :] = q_pe
         k_input[..., self.kv_lora_rank :] = k_pe
+        print ("q_input={}:{}, k_input={}:{}, v_input={}:{}".format(q_input.size(), q_input.dtype, k_input.size(), k_input.dtype, v_input.size(), v_input.dtype))
 
         attn_output = self.attn_mqa(q_input, k_input, v_input, forward_batch)
+        print ("attn_output={}:{}".format(attn_output.size(), attn_output.dtype))
         attn_output = attn_output.view(-1, self.num_local_heads, self.kv_lora_rank)
 
         if self.w_vc.dtype == torch.float8_e4m3fnuz:

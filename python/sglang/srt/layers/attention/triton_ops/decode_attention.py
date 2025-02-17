@@ -608,6 +608,11 @@ def decode_attention_fwd_grouped(
     sm_scale,
     logit_cap=0.0,
 ):
+    print ("!! decode_attention_fwd_grouped q={}:{}".format(q.size(), q.dtype))
+    print ("k_buffer={}:{}, v_buffer={}:{}".format(k_buffer.size(), k_buffer.dtype, v_buffer.size(), v_buffer.dtype))
+    print ("o={}:{}".format(o.size(), o.dtype))
+    print ("kv_indptr={}:{}, kv_indices={}:{}, attn_logits={}:{}".format(kv_indptr.size(), kv_indptr.dtype, kv_indices.size(), kv_indices.dtype, attn_logits.size(), attn_logits.dtype))
+    print ("num_kv_splits={}, sm_scale={}, logit_cap={}".format(num_kv_splits, sm_scale, logit_cap))
     _decode_grouped_att_m_fwd(
         q,
         k_buffer,
@@ -619,6 +624,9 @@ def decode_attention_fwd_grouped(
         sm_scale,
         logit_cap,
     )
+    print ("!! before calling _decode_softmax_reducev_fwd")
+    print ("attn_logits={}:{}, q={}:{}, o={}:{}".format(attn_logits.size(), attn_logits.dtype, q.size(), q.dtype, o.size(), o.dtype))
+    print ("kv_indptr={}:{}, num_kv_splits={}".format(kv_indptr.size(), kv_indptr.dtype, num_kv_splits))
     _decode_softmax_reducev_fwd(attn_logits, q, o, v_buffer, kv_indptr, num_kv_splits)
 
 
@@ -636,6 +644,9 @@ def decode_attention_fwd(
 ):
     assert num_kv_splits == attn_logits.shape[2]
     kv_group_num = q.shape[1] // v_buffer.shape[1]
+    print ("!! decode_attention_fwd q={}:{}, k_buffer={}:{}, v_buffer={}:{}".format(q.size(), q.dtype, k_buffer.size(), k_buffer.dtype, v_buffer.size(), v_buffer.dtype))
+    print ("o={}:{}, kv_indptr={}:{}, kv_indices={}:{}".format(o.size(), o.dtype, kv_indptr.size(), kv_indptr.dtype, kv_indices.size(), kv_indices.dtype))
+    print ("attn_logits={}:{}, num_kv_splits={}, sm_scale={}, logit_cap={}".format(attn_logits.size(), attn_logits.dtype, num_kv_splits, sm_scale, logit_cap))
 
     if kv_group_num == 1:
         # MHA
