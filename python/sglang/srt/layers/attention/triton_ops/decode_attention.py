@@ -626,6 +626,7 @@ def decode_attention_fwd_grouped(
     )
     print ("!! before calling _decode_softmax_reducev_fwd")
     print ("attn_logits={}:{}, q={}:{}, o={}:{}".format(attn_logits.size(), attn_logits.dtype, q.size(), q.dtype, o.size(), o.dtype))
+    print ("v_buffer={}:{}".format(v_buffer.size(), v_buffer.dtype))
     print ("kv_indptr={}:{}, num_kv_splits={}".format(kv_indptr.size(), kv_indptr.dtype, num_kv_splits))
     _decode_softmax_reducev_fwd(attn_logits, q, o, v_buffer, kv_indptr, num_kv_splits)
 
