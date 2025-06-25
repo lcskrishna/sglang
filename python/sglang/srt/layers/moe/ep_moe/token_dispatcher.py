@@ -6,7 +6,7 @@ from sglang.srt.managers.expert_distribution import (
     get_global_expert_distribution_recorder,
 )
 from sglang.srt.managers.schedule_batch import global_server_args_dict
-from sglang.srt.utils import DeepEPMode, get_int_env_var, load_json_config
+from sglang.srt.utils import DeepEPMode, get_int_env_var, load_json_config, is_hip
 
 try:
     from deep_ep import Buffer, Config
@@ -101,15 +101,26 @@ class DeepEPBuffer:
         else:
             raise NotImplementedError
 
-        cls._buffer = Buffer(
-            group,
-            num_nvl_bytes,
-            num_rdma_bytes,
-            low_latency_mode=deepep_mode.enable_low_latency(),
-            num_qps_per_rank=num_qps_per_rank,
-            # TODO can be false when unneeded
-            allow_mnnvl=True,
-        )
+        if is_hip():
+            cls._buffer = Buffer(
+                group,
+                num_nvl_bytes,
+                num_rdma_bytes,
+                low_latency_mode=deepep_mode.enable_low_latency(),
+                num_qps_per_rank=num_qps_per_rank,
+                # TODO can be false when unneeded
+                # allow_mnnvl=True,
+            )
+        else:
+            cls._buffer = Buffer(
+                group,
+                num_nvl_bytes,
+                num_rdma_bytes,
+                low_latency_mode=deepep_mode.enable_low_latency(),
+                num_qps_per_rank=num_qps_per_rank,
+                # TODO can be false when unneeded
+                allow_mnnvl=True,
+            )
         return cls._buffer
 
     @classmethod
