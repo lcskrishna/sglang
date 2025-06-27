@@ -300,7 +300,7 @@ class DeepseekV2MoE(nn.Module):
                 prefix=add_prefix("shared_experts", prefix),
                 **(
                     dict(tp_rank=0, tp_size=1)
-                    if global_server_args_dict["enable_deepep_moe"]
+                    if _is_hip or global_server_args_dict["enable_deepep_moe"]
                     else {}
                 ),
             )
