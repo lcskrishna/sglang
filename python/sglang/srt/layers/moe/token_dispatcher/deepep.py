@@ -199,15 +199,27 @@ class DeepEPBuffer:
                     f"Consider using --deepep-config to change the behavior."
                 )
 
-        cls._buffer = Buffer(
-            group,
-            num_nvl_bytes,
-            num_rdma_bytes,
-            low_latency_mode=deepep_mode.enable_low_latency(),
-            num_qps_per_rank=num_qps_per_rank,
-            # TODO can be false when unneeded
-            allow_mnnvl=True,
-        )
+        if is_hip():
+            # TODO: remove this condition after deepEP is updated with latest APIs.
+            cls._buffer = Buffer(
+                group,
+                num_nvl_bytes,
+                num_rdma_bytes,
+                low_latency_mode=deepep_mode.enable_low_latency(),
+                num_qps_per_rank=num_qps_per_rank,
+                # TODO can be false when unneeded
+                #allow_mnnvl=True,
+            )
+        else:
+            cls._buffer = Buffer(
+                group,
+                num_nvl_bytes,
+                num_rdma_bytes,
+                low_latency_mode=deepep_mode.enable_low_latency(),
+                num_qps_per_rank=num_qps_per_rank,
+                # TODO can be false when unneeded
+                allow_mnnvl=True,
+            )
         return cls._buffer
 
     @classmethod
