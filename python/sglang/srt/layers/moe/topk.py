@@ -704,7 +704,7 @@ def biased_grouped_topk_gpu(
                 topk_ids, expert_location_dispatch_info, num_token_non_padded
             )
         return topk_weights, topk_ids
-    elif _use_aiter:
+    elif _use_aiter and False:
         assert not apply_routed_scaling_factor_on_output, "Not implemented"
         token = gating_output.shape[0]
         device = gating_output.device
