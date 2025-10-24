@@ -118,7 +118,7 @@ class DeepEPMoE(FusedMoE):
             return_recv_hook=True,
         )
 
-        if self.deepep_mode.enable_low_latency() and not _is_npu:
+        if self.deepep_mode.enable_low_latency() and not _is_npu and not _is_hip:
             # NPU supports low_latency deepep without deepgemm
             assert (
                 deep_gemm_wrapper.ENABLE_JIT_DEEPGEMM
@@ -243,11 +243,35 @@ class DeepEPMoE(FusedMoE):
         self,
         dispatch_output: Union[DeepEPNormalOutput, DeepEPLLOutput],
     ):
-        hidden_states, topk_idx, topk_weights = (
-            dispatch_output.hidden_states,
-            dispatch_output.topk_idx,
-            dispatch_output.topk_weights,
-        )
+        from sglang.srt.layers.moe.token_dispatcher import DispatchOutputChecker
+        is_normal_mode = True
+        if DispatchOutputChecker.format_is_deepep_normal(dispatch_output):
+            hidden_states, topk_idx, topk_weights = (
+                dispatch_output.hidden_states,
+                dispatch_output.topk_idx,
+                dispatch_output.topk_weights,
+            )
+        elif DispatchOutputChecker.format_is_deepep_ll(dispatch_output):
+            is_normal_mode = False
+            hidden_states_fp8, topk_idx, topk_weights = (
+                dispatch_output.hidden_states_fp8,
+                dispatch_output.topk_idx,
+                dispatch_output.topk_weights,
+            )
+            if isinstance(hidden_states_fp8, tuple):
+                hidden_states, _ = hidden_states_fp8
+            else:
+                hidden_states = hidden_states_fp8
+        else:
+            raise ValueError(f"Not Supported DeepEP format {dispatch_output.format}")
+        print ("------------------------------------")
+        print ("CHAI: entered _forward_aiter method with is_normal_mode={} and hidden_states={}".format(is_normal_mode, hidden_states.size()))
+
+        #hidden_states, topk_idx, topk_weights = (
+        #    dispatch_output.hidden_states,
+        #    dispatch_output.topk_idx,
+        #    dispatch_output.topk_weights,
+        #)
         if hidden_states.shape[0] == 0:
             return hidden_states
         # in original deepep, idx == -1 meaning invalid and will not be processed.
@@ -256,22 +280,94 @@ class DeepEPMoE(FusedMoE):
         topk_idx_copy = topk_idx.to(torch.int32)
         topk_idx_copy[topk_idx_copy == -1] = self.num_local_experts
 
-        return fused_moe(
-            hidden_states,
-            self.w13_weight,
-            self.w2_weight,
-            topk_weights,
-            topk_idx_copy,
-            w1_scale=self.w13_weight_scale_inv,
-            w2_scale=self.w2_weight_scale_inv,
-            quant_type=QuantType.per_128x128,
-            activation=(
-                ActivationType.Silu
-                if self.moe_runner_config.activation == "silu"
-                else ActivationType.Gelu
-            ),
-            expert_mask=self.expert_mask,
-        )
+        if is_normal_mode:
+            return fused_moe(
+                hidden_states,
+                self.w13_weight,
+                self.w2_weight,
+                topk_weights,
+                topk_idx_copy,
+                w1_scale=self.w13_weight_scale_inv,
+                w2_scale=self.w2_weight_scale_inv,
+                quant_type=QuantType.per_128x128,
+                activation=(
+                    ActivationType.Silu
+                    if self.moe_runner_config.activation == "silu"
+                    else ActivationType.Gelu
+                ),
+                expert_mask=self.expert_mask,
+            )
+        else:
+            ## low latency mode.
+            # update hidden_states from [group_count, group_token, hidden] = [group_count * group_token, hidden]
+            group_count = 1
+            group_token = 1
+            print ("CHAI: inside low latency forward_aiter")
+            if hidden_states.dim() == 3:
+                print ("hidden_states dim is 3 and size is ={}".format(hidden_states.size()))
+                print ("topk_weights={}".format(topk_weights.size()))
+                print ("topk_idx_copy={}".format(topk_idx_copy.size()))
+                group_count, group_token, hidden_size = hidden_states.size()
+                hidden_states_updated = hidden_states.reshape(-1, hidden_states.size()[-1])
+                topk_weights_first_val = topk_weights.size()[0]
+                if topk_weights_first_val == 0:
+                    return hidden_states ## no need to process.
+                else:
+                    repeat_count = int((group_count * group_token) // topk_weights_first_val)
+
+                ## hack, need to properly use group gemm.
+                if (hidden_states_updated.size()[0] % topk_weights_first_val != 0):
+                    return hidden_states
+                topk_weights_updated = topk_weights.repeat(repeat_count, 1)
+                topk_idx_copy_updated = topk_idx_copy.repeat(repeat_count, 1)
+                print ("topk_weights_updated={}".format(topk_weights_updated.size()))
+                print ("topk_idx_copy_updated={}".format(topk_idx_copy_updated.size()))
+                print ("hidden_states_updated={}".format(hidden_states_updated.size()))
+                print ("repeat_count={}".format(repeat_count))
+                
+                assert hidden_states_updated.size()[0] == topk_weights_updated.size()[0], \
+                       f"Values should be of same size LL Fw aiter hidden={hidden_states_updated.size()}, topk_weights={topk_weights_updated.size()}, original_hidden={hidden_states.size()}, original_topk_weights={topk_weights.size()}"
+
+                output_hidden =  fused_moe(
+                    hidden_states_updated,
+                    self.w13_weight,
+                    self.w2_weight,
+                    topk_weights_updated,
+                    topk_idx_copy_updated,
+                    w1_scale=self.w13_weight_scale_inv,
+                    w2_scale=self.w2_weight_scale_inv,
+                    quant_type=QuantType.per_128x128,
+                    activation=(
+                        ActivationType.Silu
+                        if self.moe_runner_config.activation == "silu"
+                        else ActivationType.Gelu
+                    ),
+                    expert_mask=self.expert_mask,
+                )
+                if (output_hidden.shape[0] == 0):
+                    return hidden_states
+                assert output_hidden.size()[0] == group_count * group_token, "The group count value is not correct."
+                print ("output_hidden={}, group_count={}, group_token={}".format(output_hidden.size(), group_count, group_token))
+                output = output_hidden.reshape(group_count, group_token, output_hidden.size()[-1])
+                print ("output={}".format(output.size()))
+                return output
+            else:
+                return fused_moe(
+                    hidden_states,
+                    self.w13_weight,
+                    self.w2_weight,
+                    topk_weights,
+                    topk_idx_copy,
+                    w1_scale=self.w13_weight_scale_inv,
+                    w2_scale=self.w2_weight_scale_inv,
+                    quant_type=QuantType.per_128x128,
+                    activation=(
+                        ActivationType.Silu
+                        if self.moe_runner_config.activation == "silu"
+                        else ActivationType.Gelu
+                    ),
+                    expert_mask=self.expert_mask,
+                )
 
     def forward_deepgemm_contiguous(
         self,
