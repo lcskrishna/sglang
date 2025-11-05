@@ -50,8 +50,10 @@ if not (_is_npu or _is_hip):
     from sgl_kernel import silu_and_mul
 
 if _use_aiter:
+    import aiter
     from aiter import ActivationType, QuantType
     from aiter.fused_moe import fused_moe
+    from aiter import deepgemm
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +120,7 @@ class DeepEPMoE(FusedMoE):
             return_recv_hook=True,
         )
 
-        if self.deepep_mode.enable_low_latency() and not _is_npu:
+        if self.deepep_mode.enable_low_latency() and not _is_npu and not _is_hip:
             # NPU supports low_latency deepep without deepgemm
             assert (
                 deep_gemm_wrapper.ENABLE_JIT_DEEPGEMM
@@ -204,7 +206,11 @@ class DeepEPMoE(FusedMoE):
         if _use_aiter:
             assert DispatchOutputChecker.format_is_deepep(dispatch_output)
             # in forward_aiter, we skip token permutation and unpermutation, which have been fused inside aiter kernel
-            return self.forward_aiter(dispatch_output)
+            #return self.forward_aiter(dispatch_output)
+            if self.deepep_mode.enable_low_latency():
+                return self.forward_aiter_low_latency(dispatch_output)
+            else:
+                return self.forward_aiter(dispatch_output)
         if _is_npu:
             assert DispatchOutputChecker.format_is_deepep(dispatch_output)
             return self.forward_npu(dispatch_output)
@@ -238,6 +244,56 @@ class DeepEPMoE(FusedMoE):
             forward_batch=forward_batch,
             overlap_args=overlap_args,
         )
+
+    def quantize_3d(self, x, quant_dtype):
+        B, S, H = x.shape
+        x_flat = x.reshape(B * S, H)
+        q_flat, scale = aiter.per_token_quant_hip(x_flat, quant_dtype=quant_dtype)
+        q_tensor = q_flat.view(B, S, H)
+        scale_tensor = scale.view(B, S, 1)
+        return 1, q_tensor, scale_tensor
+
+    def forward_aiter_low_latency(
+        self,
+        dispatch_output: Union[DeepEPNormalOutput, DeepEPLLOutput],
+    ):
+        hidden_states_fp8, hidden_states_fp8_scale, topk_idx, topk_weights, masked_m = (
+            dispatch_output.hidden_states_fp8[0],
+            dispatch_output.hidden_states_fp8[1],
+            dispatch_output.topk_idx,
+            dispatch_output.topk_weights,
+            dispatch_output.masked_m,
+        )
+
+        if hidden_states_fp8.shape[0] == 0:
+            return hidden_states_fp8
+
+        topk_idx_copy = topk_idx.to(torch.int32)
+        topk_idx_copy[topk_idx_copy == -1] = self.num_local_experts
+
+        fc1_result = torch.empty(
+            (self.w13_weight.shape[0], hidden_states_fp8.shape[1], self.w13_weight.shape[1]),
+            dtype=torch.bfloat16,
+            device=hidden_states_fp8.device,
+        )
+        output = torch.rand(
+            (self.w13_weight.shape[0], hidden_states_fp8.shape[1], hidden_states_fp8.shape[-1]),
+            dtype=torch.bfloat16,
+            device=hidden_states_fp8.device
+        )
+        deepgemm(hidden_states_fp8, self.w13_weight, fc1_result, masked_m, hidden_states_fp8_scale, self.w13_weight_scale)
+
+        fc1_activation = torch.empty(
+            (self.w13_weight.shape[0], hidden_states_fp8.shape[1], self.w2_weight.shape[-1]),
+            dtype=torch.bfloat16,
+            device=hidden_states_fp8.device
+        )
+
+        aiter.silu_and_mul(fc1_activation, fc1_result)
+        q_fc1_struct, fc1_act_int8, fc1_act_scale = self.quantize_3d(fc1_activation, quant_dtype=self.w2_weight.dtype)
+        deepgemm(fc1_act_int8, self.w2_weight, output, masked_m, fc1_act_scale, self.w2_weight_scale)
+
+        return output
 
     def forward_aiter(
         self,
