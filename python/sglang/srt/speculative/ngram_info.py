@@ -7,6 +7,8 @@ from typing import Optional, Tuple
 import torch
 import triton
 
+from sglang.srt.server_args import get_global_server_args
+
 logger = logging.getLogger(__name__)
 
 from dataclasses import dataclass
@@ -16,10 +18,11 @@ import torch.nn.functional as F
 from sglang.srt.layers.attention.utils import create_flashinfer_kv_indices_triton
 from sglang.srt.layers.logits_processor import LogitsProcessorOutput
 from sglang.srt.layers.sampler import apply_custom_logit_processor
-from sglang.srt.managers.schedule_batch import (
-    ScheduleBatch,
+from sglang.srt.managers.schedule_batch import ScheduleBatch
+from sglang.srt.mem_cache.common import (
+    alloc_paged_token_slots_extend,
+    alloc_token_slots,
     get_last_loc,
-    global_server_args_dict,
 )
 from sglang.srt.sampling.sampling_batch_info import SamplingBatchInfo
 from sglang.srt.speculative.spec_info import SpecInput, SpecInputType
@@ -74,7 +77,10 @@ class NgramVerifyInput(SpecInput):
         batch.input_ids = self.draft_token
 
         if page_size == 1:
-            batch.out_cache_loc = batch.alloc_token_slots(len(batch.input_ids))
+            batch.out_cache_loc = alloc_token_slots(
+                batch.tree_cache,
+                len(batch.input_ids),
+            )
             end_offset = batch.seq_lens + self.draft_token_num
         else:
             # TODO(lsyin): add prefix lens cpu here to support page size > 1
@@ -87,7 +93,8 @@ class NgramVerifyInput(SpecInput):
                 batch.req_pool_indices,
                 prefix_lens,
             )
-            batch.out_cache_loc = batch.alloc_paged_token_slots_extend(
+            batch.out_cache_loc = alloc_paged_token_slots_extend(
+                batch.tree_cache,
                 prefix_lens,
                 prefix_lens_cpu,
                 end_offset,
@@ -188,7 +195,9 @@ class NgramVerifyInput(SpecInput):
             logits_output.hidden_states = logits_output.hidden_states[self.accept_index]
         self.verified_id = self.predict[self.accept_index]
 
-    def _free_cache(self, batch: ScheduleBatch, page_size: int):
+    def _free_cache(
+        self, batch: ScheduleBatch, page_size: int, accept_length_cpu: torch.Tensor
+    ):
         bs = batch.batch_size()
         # Free the KV cache for unaccepted tokens
         if page_size == 1:
@@ -242,6 +251,11 @@ class NgramVerifyInput(SpecInput):
                 tgt_cache_loc, src_cache_loc
             )
             batch.out_cache_loc = tgt_cache_loc
+
+        accept_length_list = accept_length_cpu.tolist()
+        for i, req in enumerate(batch.reqs):
+            req.kv_committed_len += accept_length_list[i] + 1
+            req.kv_allocated_len = req.kv_committed_len
 
         assign_req_to_token_pool[(bs,)](
             batch.req_pool_indices,
@@ -345,10 +359,8 @@ class NgramVerifyInput(SpecInput):
             uniform_samples_for_final_sampling=coins_for_final_sampling,
             target_probs=target_probs,
             draft_probs=draft_probs,
-            threshold_single=global_server_args_dict[
-                "speculative_accept_threshold_single"
-            ],
-            threshold_acc=global_server_args_dict["speculative_accept_threshold_acc"],
+            threshold_single=get_global_server_args().speculative_accept_threshold_single,
+            threshold_acc=get_global_server_args().speculative_accept_threshold_acc,
             deterministic=True,
         )
 
@@ -411,10 +423,11 @@ class NgramVerifyInput(SpecInput):
             # self._sampling_verify(batch, logits_output, sampling_info)
 
         self._fill_requests(batch, logits_output)
-        self._free_cache(batch, page_size)
 
         accept_length_cpu = self.accept_length.cpu()
         num_accepted_tokens = accept_length_cpu.sum().item()
+
+        self._free_cache(batch, page_size, accept_length_cpu)
 
         batch.seq_lens.add_(self.accept_length + 1)
         batch.seq_lens_cpu.add_(accept_length_cpu + 1)
