@@ -167,6 +167,7 @@ class DeepEPBuffer:
                 ),
                 num_rdma_bytes,
             )
+            print ("CHAI: -------> num_rdma_bytes is = {}".format(num_rdma_bytes))
 
         # We should calculate num_qps_per_rank consistently with DeepEP's test script logic:
         if deepep_mode == DeepEPMode.NORMAL:
@@ -589,6 +590,10 @@ class _DeepEPDispatcherImplLowLatency(_DeepEPDispatcherImplBase):
             use_fp8 = True
 
         buffer = self._get_buffer()
+        print ("CHAI: -- low latency dispatch function details.")
+        print (f"hidden_states={hidden_states.size()}:{hidden_states.dtype}, topk_idx={topk_idx.size()}:{topk_idx.dtype}")
+        print (f"num_max_dispatch_tokens_per_rank={self.num_max_dispatch_tokens_per_rank}, num_experts={self.num_experts}")
+        print (f"use_fp8={use_fp8}")
         packed_recv_hidden, self.packed_recv_count, self.handle, event, hook = (
             buffer.low_latency_dispatch(
                 hidden_states,
