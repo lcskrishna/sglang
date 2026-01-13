@@ -207,10 +207,12 @@ class DeepEPMoE(FusedMoE):
             assert DispatchOutputChecker.format_is_deepep(dispatch_output)
             # in forward_aiter, we skip token permutation and unpermutation, which have been fused inside aiter kernel
             #return self.forward_aiter(dispatch_output)
-            if self.deepep_mode.enable_low_latency():
-                return self.forward_aiter_low_latency(dispatch_output)
+            if DispatchOutputChecker.format_is_deepep_normal(dispatch_output):
+                return self.forward_aiter(dispatch_output) 
+            elif DispatchOutputChecker.format_is_deepep_ll(dispatch_output):
+                return self.forward_aiter_low_latency(dispatch_output) 
             else:
-                return self.forward_aiter(dispatch_output)
+                raise ValueError(f"Not Supported DeepEP format {dispatch_output.format}")
         if _is_npu:
             assert DispatchOutputChecker.format_is_deepep(dispatch_output)
             return self.forward_npu(dispatch_output)
@@ -228,7 +230,6 @@ class DeepEPMoE(FusedMoE):
             raise ValueError(
                 f"Dispatch output format {dispatch_output.format} is not supported"
             )
-
     def combine(
         self,
         hidden_states: torch.Tensor,

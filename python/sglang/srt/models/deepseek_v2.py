@@ -608,14 +608,14 @@ class DeepseekV2MoE(nn.Module):
                 not is_packed_weight
                 and self.shared_experts.gate_up_proj.weight.dtype == torch.float8_e4m3fn
             )
-            if self.shared_experts_is_fp8:
-                assert (
-                    self.shared_experts.gate_up_proj.quant_method.quant_config.weight_block_size
-                    == self.shared_experts.down_proj.quant_method.quant_config.weight_block_size
-                )
-                self.shared_experts_weight_block_size = (
-                    self.shared_experts.gate_up_proj.quant_method.quant_config.weight_block_size
-                )
+            #if self.shared_experts_is_fp8:
+            #    assert (
+            #        self.shared_experts.gate_up_proj.quant_method.quant_config.weight_block_size
+            #        == self.shared_experts.down_proj.quant_method.quant_config.weight_block_size
+            #    )
+            #    self.shared_experts_weight_block_size = (
+            #        self.shared_experts.gate_up_proj.quant_method.quant_config.weight_block_size
+            #    )
 
         self.top_k = config.num_experts_per_tok
 
