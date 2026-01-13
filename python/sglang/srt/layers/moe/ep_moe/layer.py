@@ -319,8 +319,8 @@ class DeepEPMoE(FusedMoE):
             self.w2_weight,
             topk_weights,
             topk_idx_copy,
-            w1_scale=self.w13_weight_scale_inv,
-            w2_scale=self.w2_weight_scale_inv,
+            w1_scale=self.w13_weight_scale_inv if self.use_block_quant else self.w13_weight_scale,
+            w2_scale=self.w2_weight_scale_inv if self.use_block_quant else self.w2_weight_scale,
             quant_type=QuantType.per_128x128,
             activation=(
                 ActivationType.Silu
