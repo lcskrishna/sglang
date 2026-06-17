@@ -130,6 +130,12 @@ _is_xpu = is_xpu()
 _use_aiter = get_bool_env_var("SGLANG_USE_AITER") and _is_hip
 _is_musa = is_musa()
 
+# One-shot debug for the HIP EPLB logical->physical remap. Enable with
+# SGLANG_EPLB_HIP_DEBUG=1 to verify (per layer, once) that the remap is live and
+# that post-remap ids land in the physical expert range [0, num_physical_experts).
+_eplb_hip_debug = get_bool_env_var("SGLANG_EPLB_HIP_DEBUG")
+_eplb_hip_debug_logged_layers: set = set()
+
 if _is_cuda:
     from sgl_kernel import moe_fused_gate
 
@@ -1583,6 +1589,25 @@ def _post_process_topk_ids(
             topk_ids = topk_ids_logical_to_physical(
                 topk_ids, expert_location_dispatch_info
             )
+            # One-shot (per layer) sanity log proving the remap branch is live.
+            # IMPORTANT: must be sync-free. Reading topk_ids values (.item()/min/max)
+            # forces a host-device sync, which hangs silently if it happens during
+            # HIP CUDA-graph capture (is_current_stream_capturing() is not reliable
+            # here). So we log only CPU-side metadata (Python ints / tensor.shape /
+            # dtype), never the device tensor contents.
+            if _eplb_hip_debug and layer_id not in _eplb_hip_debug_logged_layers:
+                _eplb_hip_debug_logged_layers.add(layer_id)
+                _dmap = (
+                    expert_location_dispatch_info.partial_logical_to_rank_dispatch_physical_map
+                )
+                logger.info(
+                    "[EPLB-HIP-remap] layer_id=%s remap is LIVE (sync-free) | "
+                    "num_physical_experts=%d dispatch_map.shape=%s dtype=%s",
+                    layer_id,
+                    expert_location_dispatch_info.num_physical_experts,
+                    tuple(_dmap.shape) if _dmap is not None else None,
+                    topk_ids.dtype,
+                )
         # On AMD HIP the aiter MoE kernels do not handle topk_ids=-1 safely, so
         # padded tokens are neutralized by zeroing their routing weights.
         _zero_topk_weights_padded_region(topk_weights, num_token_non_padded)
